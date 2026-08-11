@@ -17,10 +17,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo fmt --check
-      - run: cargo check --all-targets
-      - run: cargo test --all-targets
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo fmt --all -- --check
+      - run: cargo check --locked --all-targets
+      - run: cargo test --locked --all-targets
+      - run: cargo clippy --locked --all-targets -- -D warnings
 
   integration-nft:
     name: nftables network-namespace integration
@@ -32,7 +32,7 @@ jobs:
       - name: Install nftables and iproute2
         run: sudo apt-get update && sudo apt-get install --yes nftables iproute2
       - name: Build daemon and CLI for the namespace test
-        run: cargo build --bins
+        run: cargo build --locked --bins
       - name: Run privileged nftables namespace checks
         run: sudo ./tests/integration_nft.sh
 
@@ -41,3 +41,46 @@ jobs:
       # this job is not evidence that integration assertions ran. A runner with
       # root + CAP_NET_ADMIN + unshare support executes all assertions and any
       # failure exits non-zero.
+
+  nft-compatibility:
+    name: nftables compatibility (${{ matrix.nft_version }})
+    needs: rust-quality
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:12
+            nft_version: "1.0.6"
+          - image: ubuntu:24.04
+            nft_version: "1.0.9"
+          - image: debian:13
+            nft_version: "1.1.3"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install static-link prerequisites
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - name: Build portable integration binaries
+        run: cargo build --locked --target x86_64-unknown-linux-musl --bins
+      - name: Run namespace integration against the selected nftables release
+        env:
+          NFT_IMAGE: ${{ matrix.image }}
+          NFT_VERSION: ${{ matrix.nft_version }}
+        run: |
+          docker run --rm --privileged \
+            -e PORT_FORWARDD=/workspace/target/x86_64-unknown-linux-musl/debug/port-forwardd \
+            -e PORT_FORWARD=/workspace/target/x86_64-unknown-linux-musl/debug/port-forward \
+            -e NFT_VERSION \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            "$NFT_IMAGE" \
+            bash -euc '
+              apt-get update
+              apt-get install --yes nftables iproute2 util-linux
+              nft --version
+              nft --version | grep -F "v${NFT_VERSION}" >/dev/null
+              ./tests/integration_nft.sh
+            '

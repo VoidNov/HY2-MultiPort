@@ -35,6 +35,31 @@ journald / syslog <────────────────── daemon
 配置、DNS、网络预检或 `nft -c` 不会替换之前已提交的规则。daemon 退出或崩溃
 时不会主动删除已提交规则。
 
+## nftables 兼容性、升级与回滚
+
+v0.0.2 不再使用 `destroy table`。每次重载会先通过 `nft -j list tables` 查询
+`port_forward_v4` 与 `port_forward_v6` 是否存在：首次启动只创建 table；已有自有
+table 的重载才在同一个 batch 内先执行相应的 `delete table`、再重建。随后仍严格
+按 `nft -c -f -` 预检成功、再单次 `nft -f -` 原子提交的顺序执行。因此预检失败
+不会删除旧 table。
+
+本版本的 CI 兼容性矩阵使用真实 namespace 集成入口和真实 `nft -c`，目标为
+nftables 1.0.6、1.0.9、1.1.3（分别对应 Debian 12、Ubuntu 24.04、Debian 13 的
+常见基线）。1.0.6 是当前的**验证边界**，不是对更低版本或任意发行版补丁版本的
+最低可用承诺。规则使用稳定的 `table ip`/`table ip6`、NAT/filter base chain 和数值
+priority：prerouting `-100`、forward `0`、postrouting `100`，不依赖命名 priority。
+
+v0.0.2 消除了旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
+组合；这不等于项目已验证某个更低的内核下限。内核的 nf_tables/NAT 功能、发行版
+backport 和本机防火墙策略仍会影响可用性，目前没有经过验证的精确最低内核版本。
+部署前请在目标内核上运行下文的 namespace 集成测试或等价的 `nft -c` 验证。
+
+从 v0.0.1 升级时，先保留现有配置和状态文件、安装新二进制并重启 daemon；新版本
+会识别并原子替换同名自有 table，不接触外部规则。回滚前应保存配置和
+`nft list table ip port_forward_v4` / `nft list table ip6 port_forward_v6` 输出。若回滚
+到 v0.0.1，目标环境仍必须满足其 `destroy table` 前提；在不支持该命令的旧环境中应
+保留 v0.0.2，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
+
 ## 配置模型
 
 唯一人工维护的配置是 TOML，当前必须设置 `schema_version = 1`。可选的
@@ -134,27 +159,36 @@ sudo rc-service port-forwardd start
 OpenRC 脚本使用 `supervise-daemon` respawn daemon；仍由 daemon 自身在启动时
 执行完整 reload。
 
-### 静态发布包
+### 发布包
 
-在已安装两个 Rust musl target 和对应 C linker 的构建机上运行：
+在已安装 Rust target 和对应 C linker 的构建机上运行：
 
 ```bash
 scripts/build-release.sh
 ```
 
-该脚本生成 `dist/port-forward-<version>-x86_64-unknown-linux-musl.tar.gz` 与
-`dist/port-forward-<version>-aarch64-unknown-linux-musl.tar.gz`。它在缺少 target、
-linker 或 Cargo 时会停止并给出安装提示，不会产生伪成功包。
+默认生成以下经过内容校验的包，以及 `dist/SHA256SUMS`：
+
+- `port-forward-<version>-x86_64-unknown-linux-gnu.tar.gz`
+- `port-forward-<version>-x86_64-unknown-linux-musl.tar.gz`
+- `port-forward-<version>-aarch64-unknown-linux-musl.tar.gz`
+
+每个包均包含 `port-forward`、`port-forwardd`、README、示例配置、systemd unit 和
+OpenRC service。脚本可用 `--target <triple>` 只构建一个目标；默认 `cargo` 构建器在
+缺少 target 或 linker 时会明确失败。发布工作流以同一脚本的 `--builder cross` 模式
+交叉构建，任何目标未产出可执行二进制或包内容不完整都会使发布失败，而不会上传
+伪造包。推送匹配 `v<version>` 的 tag（或手动输入相同 tag）后才会创建 GitHub Release；
+已存在的 Release 会原样保留，避免重复发布。
 
 ## 验证范围与限制
 
-以下 Rust 质量检查已在**无 root 环境**实际完成：
+发布前应执行以下 Rust 质量检查：
 
 ```text
-cargo fmt --check
-cargo check --all-targets
-cargo test --all-targets       # 19 tests passed
-cargo clippy --all-targets -- -D warnings
+cargo fmt --all -- --check
+cargo check --locked --all-targets
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
 这些检查覆盖配置语义、端口投影、规则文本生成、DNS 状态和 Unix socket 等单元级
@@ -167,10 +201,11 @@ cargo clippy --all-targets -- -D warnings
 sudo ./tests/integration_nft.sh
 ```
 
-该脚本会在独立 network namespace 中进行 nft 预检，启动 daemon，并验证 IPv6
-表没有 NAT66 / postrouting，以及被拒绝的重载保留旧 nft 规则。若运行器缺少所需
-权限或工具，脚本会输出 `SKIP: ...` 并退出 0；这代表**没有运行集成测试**，而不是
-集成测试通过。具备前提条件后，任何断言失败都会以非零退出。
+该脚本会在独立 network namespace 中进行 nft 预检，覆盖首次 IPv4/IPv6 table
+创建、已有自有 table 的成功原子重载、被拒绝的 `nft -c` 重载保留旧规则、默认拒绝
+外部 hook 与 `allow_external_chains = true` 的显式共存，并验证 IPv6 表没有 NAT66 /
+postrouting。若运行器缺少所需权限或工具，脚本会输出 `SKIP: ...` 并退出 0；这代表
+**没有运行集成测试**，而不是集成测试通过。具备前提条件后，任何断言失败都会以非零退出。
 
 尚需在特权 Linux CI 验证的完整矩阵包括真实 IPv4/IPv6 数据包转发、IPv4
 `masquerade` 与 `preserve` 回程、`redirect`、`loopback-dnat` 的

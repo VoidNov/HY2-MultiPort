@@ -45,7 +45,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 else
     (
         cd "$repo_root"
-        cargo build --bins
+        cargo build --locked --bins
     ) || fail 'failed to build port-forward binaries'
 fi
 
@@ -63,17 +63,44 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The daemon uses this wrapper so the test can force only the `nft -c` phase
+# to fail after a successful initial apply. Every normal command still invokes
+# the real nft binary, including the initial-install and reload preflights.
+nft_precheck_failure_marker="$work_dir/fail-nft-precheck"
+nft_wrapper="$work_dir/nft-wrapper"
+cat >"$nft_wrapper" <<'NFT_WRAPPER'
+#!/bin/sh
+if [ "$1" = "-c" ] && [ "$2" = "-f" ] && [ "$3" = "-" ] \
+    && [ -n "${NFT_PRECHECK_FAILURE_MARKER:-}" ] \
+    && [ -e "$NFT_PRECHECK_FAILURE_MARKER" ]; then
+    printf '%s\n' 'forced nft preflight failure' >&2
+    exit 1
+fi
+exec nft "$@"
+NFT_WRAPPER
+chmod 0755 "$nft_wrapper"
+export NFT_PRECHECK_FAILURE_MARKER="$nft_precheck_failure_marker"
+
 ip link set lo up || fail 'cannot bring loopback up in network namespace'
 ip address add 127.0.0.2/8 dev lo || fail 'cannot add IPv4 listener address'
 ip address add 127.0.0.3/8 dev lo || fail 'cannot add IPv4 remote listener address'
 ip -6 address add 2001:db8:100::1/64 dev lo || fail 'cannot add IPv6 listener address'
 ip -6 route add 2001:db8:200::/64 dev lo || fail 'cannot add IPv6 route for daemon preflight'
 
+# A first installation must not require an owned table to exist. In particular,
+# the daemon must not emit `delete table` or the newer `destroy table` here.
+if nft list table ip port_forward_v4 >/dev/null 2>&1; then
+    fail 'IPv4 owned table unexpectedly existed before first installation'
+fi
+if nft list table ip6 port_forward_v6 >/dev/null 2>&1; then
+    fail 'IPv6 owned table unexpectedly existed before first installation'
+fi
+
 # First assert a standalone nft batch can be kernel-preflighted without change.
 if ! nft -c -f - <<'NFT_BATCH'
 table ip port_forward_integration_preflight {
     chain prerouting {
-        type nat hook prerouting priority dstnat; policy accept;
+        type nat hook prerouting priority -100; policy accept;
         ip daddr 127.0.0.2 tcp dport 2053 redirect to :5353
     }
 }
@@ -138,7 +165,7 @@ add table ip external_port_forward_test
 add chain ip external_port_forward_test external_prerouting { type nat hook prerouting priority -100; policy accept; }
 NFT_EXTERNAL
 
-"$daemon" --config "$config" --socket "$default_socket" --state "$default_state" >"$default_log" 2>&1 &
+"$daemon" --nft "$nft_wrapper" --config "$config" --socket "$default_socket" --state "$default_state" >"$default_log" 2>&1 &
 default_pid=$!
 for _attempt in $(seq 1 50); do
     if ! kill -0 "$default_pid" 2>/dev/null; then
@@ -157,7 +184,7 @@ grep -Fq 'external nftables base-chain/hook conflict' "$default_log" \
 # Explicit opt-in permits coexistence while still using only owned tables.
 sed -i '/^schema_version = 1$/a allow_external_chains = true' "$config"
 
-"$daemon" --config "$config" --socket "$socket" --state "$state" >"$daemon_log" 2>&1 &
+"$daemon" --nft "$nft_wrapper" --config "$config" --socket "$socket" --state "$state" >"$daemon_log" 2>&1 &
 daemon_pid=$!
 
 for _attempt in $(seq 1 100); do
@@ -170,6 +197,12 @@ for _attempt in $(seq 1 100); do
 done
 [[ -S $socket ]] || fail 'daemon did not bind its control socket in time'
 
+# This successful first daemon start runs a real `nft -c` and `nft -f` through
+# the integration entry point. It proves absent owned IPv4 and IPv6 tables are
+# created without the unsupported `destroy table` command.
+nft list table ip port_forward_v4 >/dev/null || fail 'IPv4 table was not created on first install'
+nft list table ip6 port_forward_v6 >/dev/null || fail 'IPv6 table was not created on first install'
+
 # The IPv6 table must only contain DNAT/FORWARD rules: NAT66 is forbidden.
 ipv6_rules=$(nft list table ip6 port_forward_v6) || fail 'IPv6 daemon table was not installed'
 if grep -Eqi 'masquerade|snat|postrouting' <<<"$ipv6_rules"; then
@@ -178,14 +211,29 @@ if grep -Eqi 'masquerade|snat|postrouting' <<<"$ipv6_rules"; then
 fi
 grep -Fq 'dnat to [2001:db8:200::53]:443' <<<"$ipv6_rules" || fail 'IPv6 remote DNAT rule is absent'
 
-# Preserve the installed owned table, request an invalid reload, and prove the
-# daemon retained the old table rather than committing a partial replacement.
-nft list table ip port_forward_v4 >"$work_dir/old-v4.nft" || fail 'IPv4 daemon table was not installed'
-printf 'schema_version = 999\n' >"$config"
-if "$cli" apply --socket "$socket"; then
-    fail 'invalid reload unexpectedly succeeded'
+# Reload a changed valid configuration. This can only succeed if the daemon
+# detected existing owned tables and placed `delete table` before recreating
+# them in the same nft transaction.
+sed -i 's/ports = \[10443\]/ports = [11443]/g' "$config"
+"$cli" apply --socket "$socket" || fail 'valid reload unexpectedly failed'
+reloaded_v4=$(nft list table ip port_forward_v4) || fail 'IPv4 table disappeared after reload'
+reloaded_v6=$(nft list table ip6 port_forward_v6) || fail 'IPv6 table disappeared after reload'
+grep -Fq 'tcp dport 11443' <<<"$reloaded_v4" || fail 'IPv4 table did not contain reloaded rules'
+grep -Fq 'tcp dport 11443' <<<"$reloaded_v6" || fail 'IPv6 table did not contain reloaded rules'
+if grep -Fq 'tcp dport 10443' <<<"$reloaded_v4$reloaded_v6"; then
+    fail 'reload retained old listening-port rules'
 fi
+
+# Preserve the installed owned table when nft preflight fails. The wrapper
+# rejects the daemon's actual `nft -c -f -` invocation but delegates all other
+# nft commands to the real binary.
+nft list table ip port_forward_v4 >"$work_dir/old-v4.nft" || fail 'IPv4 daemon table was not installed'
+touch "$nft_precheck_failure_marker"
+if "$cli" apply --socket "$socket"; then
+    fail 'nft-preflight-failing reload unexpectedly succeeded'
+fi
+rm -f -- "$nft_precheck_failure_marker"
 nft list table ip port_forward_v4 >"$work_dir/new-v4.nft" || fail 'IPv4 table disappeared after rejected reload'
-cmp -- "$work_dir/old-v4.nft" "$work_dir/new-v4.nft" || fail 'rejected reload changed old IPv4 rules'
+cmp -- "$work_dir/old-v4.nft" "$work_dir/new-v4.nft" || fail 'nft preflight failure changed old IPv4 rules'
 
 printf 'PASS: nft namespace integration checks completed\n'

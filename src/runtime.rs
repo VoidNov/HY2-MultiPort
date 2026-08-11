@@ -12,7 +12,7 @@ use crate::{
     config::{Config, Target, ValidatedProfile},
     control::{self, LogEvent, Request, Response},
     dns::{DnsStatus, Health, NameResolver, SystemResolver, resolve_initial, unix_now},
-    nft::{NetworkInspector, NftCommand, ResolvedProfile, RouteLocalnetAdjustment, generate_batch},
+    nft::{NetworkInspector, NftCommand, ResolvedProfile, RouteLocalnetAdjustment},
     state::{self, ProfileStatus, RuntimeState},
 };
 
@@ -225,12 +225,15 @@ impl Daemon {
             .iter()
             .map(|profile| profile.resolved.clone())
             .collect::<Vec<_>>();
-        let batch = generate_batch(&resolved);
         if !allow_external_chains {
             self.nft
                 .reject_external_hook_conflicts()
                 .context("nft hook conflict preflight")?;
         }
+        let batch = self
+            .nft
+            .prepare_batch(&resolved)
+            .context("nft managed-table preflight")?;
         let adjustments = self
             .network
             .preflight(&resolved)

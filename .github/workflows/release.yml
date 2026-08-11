@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag matching Cargo.toml, for example v0.0.2"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+      - name: Build and verify release archive
+        run: scripts/build-release.sh --builder cross --target "${{ matrix.target }}"
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: port-forward-${{ matrix.target }}
+          path: dist/port-forward-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Create GitHub Release
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified archives
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: port-forward-*
+          merge-multiple: true
+      - name: Verify release tag and create checksums
+        id: release
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
+          [[ -n "$version" ]]
+          tag=${DISPATCH_TAG:-"${GITHUB_REF_NAME}"}
+          [[ "$tag" == "v$version" ]] || {
+            printf 'tag %s does not match Cargo.toml version %s\n' "$tag" "$version" >&2
+            exit 1
+          }
+          archives=(release-assets/port-forward-*.tar.gz)
+          ((${#archives[@]} == 3)) || {
+            printf 'expected three release archives, found %s\n' "${#archives[@]}" >&2
+            exit 1
+          }
+          sha256sum "${archives[@]}" >release-assets/SHA256SUMS
+          printf 'tag=%s\n' "$tag" >>"$GITHUB_OUTPUT"
+      - name: Create release if it does not already exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            printf 'GitHub Release %s already exists; leaving it unchanged.\n' "$TAG"
+            exit 0
+          fi
+          gh release create "$TAG" release-assets/port-forward-*.tar.gz release-assets/SHA256SUMS \
+            --title "HY2-MultiPort $TAG" \
+            --target "$GITHUB_SHA" \
+            --generate-notes

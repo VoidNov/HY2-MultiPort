@@ -13,7 +13,8 @@
 - 远程 IPv4 / IPv6 目标的 `DNAT`；
 - 多个独立 profile、TCP、UDP 或二者；
 - IPv4、IPv6、域名目标、DNS 自动刷新；
-- systemd 与 OpenRC 持久化，以及 musl `x86_64` / `aarch64` 静态发布包。
+- systemd 与 OpenRC 持久化，以及 `x86_64-unknown-linux-gnu`、musl `x86_64` /
+  `aarch64` 发布包。
 
 不兼容、也不迁移现有 Shell 脚本、iptables chain、配置文件或服务。
 
@@ -115,15 +116,33 @@ table ip6 port_forward_v6
 
 1. 读取并验证完整 TOML；解析所有域名并复用符合年龄限制的缓存。
 2. 预检 profile 冲突、监听 IP 本机归属、目标地址限制、IPv4 源地址模式和 IPv6 路由可达性（`ip route get`）。IPv6 回程路由由部署者负责。
-3. 生成包含本工具全部 table 的单个 nft 批处理。
-4. 使用 `nft -c -f` 预检；成功后使用一次 `nft -f` 原子提交。
-5. 仅在提交成功后替换内存状态与持久 DNS 缓存。
+3. 通过 `nft -j list tables` 仅查询本工具的 IPv4/IPv6 table 是否已存在。
+4. 生成包含本工具全部 table 的单个 nft 批处理：首次安装只创建 table；已有自有
+   table 的同一次重载才先 `delete table` 后重建。不得使用 `destroy table`，也不得
+   无条件使用 `delete table`。
+5. 使用 `nft -c -f -` 预检；成功后使用一次 `nft -f -` 原子提交。
+6. 仅在提交成功后替换内存状态与持久 DNS 缓存。
+
+base chain 使用数值 priority，分别为 prerouting `-100`、forward `0`、postrouting
+`100`，不依赖 `dstnat`、`filter`、`srcnat` 等命名 priority。
+
+兼容性验证范围为 nftables 1.0.6、1.0.9、1.1.3；其中 1.0.6 是当前验证边界，而不
+是尚未实测版本的精确最低支持声明。v0.0.2 不依赖 `destroy table`，因此不再把其
+nftables 1.0.7 / Linux kernel 6.3 前提传递给部署者。项目仍未验证 nf_tables/NAT 的
+精确最低内核版本；发行版 backport、内核配置和防火墙策略必须在目标环境实际预检。
 
 远程 IPv4 profile 生成受精确监听条件约束的 PREROUTING DNAT、FORWARD 放行以及按 `source_mode` 选择的 SNAT/MASQUERADE。远程 IPv6 只生成 DNAT 和转发放行，绝不生成 NAT66。规则仅放行由 profile 建立的新流量及其 `ESTABLISHED,RELATED` 回包。
 
 重载、目标切换和删除只停止新连接；既有 conntrack 连接自然结束，不主动清空 conntrack。
 
 daemon 必须在应用前检测外部 nftables base chain/hook 冲突。无法确认与 firewalld、UFW、Docker、Kubernetes 或人工规则共存安全时，拒绝应用并报告冲突，而不是猜测优先级。
+
+### 升级与回滚
+
+从 v0.0.1 升级到 v0.0.2 时，新 daemon 查询同名自有 table 并以预检后的单一事务
+替换；它不修改外部 table。升级前应备份配置、状态及两个自有 table 的 `nft list`
+输出。回滚到 v0.0.1 仅适用于满足旧版 `destroy table` 前提的环境；不支持该语法的
+环境不能把旧版二进制视为兼容的回滚工具，应保留 v0.0.2 或经人工验证恢复规则。
 
 ## 服务行为
 
@@ -161,4 +180,11 @@ daemon 必须在应用前检测外部 nftables base chain/hook 冲突。无法�
 - 已建立连接在重载/删除后不被主动中断；
 - systemd 与 OpenRC 服务生成和重启行为。
 
-发布物必须包含 musl 静态 `x86_64` 与 `aarch64` 的 `port-forward`、`port-forwardd`，以及示例 TOML、systemd unit 和 OpenRC service。
+实际 nft 集成入口还必须验证：两个自有 table 均不存在时首次启动成功、两个 table
+已存在时有效重载成功、真实 `nft -c` 拒绝时旧 table 字节级不变，以及默认外部 hook
+拒绝和 `allow_external_chains = true` 的显式共存。
+
+发布物必须包含 `x86_64-unknown-linux-gnu`、musl 静态 `x86_64` 与 `aarch64` 的
+`port-forward`、`port-forwardd`，以及 README、示例 TOML、systemd unit、OpenRC
+service 和 SHA256SUMS。GitHub Release 仅由匹配 `Cargo.toml` 版本的 `v*` tag 创建；
+已存在的 Release 不覆盖或重复发布。
