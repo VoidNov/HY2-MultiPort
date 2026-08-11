@@ -25,6 +25,10 @@ pub enum ConfigError {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Config {
     pub schema_version: u32,
+    /// Allows explicitly opting into coexistence with external nftables base
+    /// chains. Omitted means `false`.
+    #[serde(default)]
+    pub allow_external_chains: bool,
     #[serde(default)]
     pub profiles: Vec<Profile>,
 }
@@ -566,5 +570,11 @@ port = 53
         assert!(
             validate_target_address(AddressFamily::Ipv6, "fe80::1".parse().unwrap(), "x").is_err()
         );
+    }
+
+    #[test]
+    fn external_chain_coexistence_is_opt_in() {
+        assert!(!config("schema_version = 1").allow_external_chains);
+        assert!(config("schema_version = 1\nallow_external_chains = true").allow_external_chains);
     }
 }

@@ -40,10 +40,9 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 daemon=${PORT_FORWARDD:-"$repo_root/target/debug/port-forwardd"}
 cli=${PORT_FORWARD:-"$repo_root/target/debug/port-forward"}
 
-if [[ ! -x $daemon || ! -x $cli ]]; then
-    if ! command -v cargo >/dev/null 2>&1; then
-        fail 'port-forwardd/port-forward are not built and cargo is unavailable'
-    fi
+if ! command -v cargo >/dev/null 2>&1; then
+    [[ -x $daemon && -x $cli ]] || fail 'cargo is unavailable and binaries are not built'
+else
     (
         cd "$repo_root"
         cargo build --bins
@@ -87,6 +86,9 @@ config="$work_dir/config.toml"
 socket="$work_dir/port-forwardd.sock"
 state="$work_dir/state.json"
 daemon_log="$work_dir/daemon.log"
+default_socket="$work_dir/default.sock"
+default_state="$work_dir/default-state.json"
+default_log="$work_dir/default-daemon.log"
 
 cat >"$config" <<'CONFIG'
 schema_version = 1
@@ -129,6 +131,31 @@ kind = "remote"
 host = "2001:db8:200::53"
 port = 443
 CONFIG
+
+# An external base chain must be rejected by default.
+nft -f - <<'NFT_EXTERNAL'
+add table ip external_port_forward_test
+add chain ip external_port_forward_test external_prerouting { type nat hook prerouting priority -100; policy accept; }
+NFT_EXTERNAL
+
+"$daemon" --config "$config" --socket "$default_socket" --state "$default_state" >"$default_log" 2>&1 &
+default_pid=$!
+for _attempt in $(seq 1 50); do
+    if ! kill -0 "$default_pid" 2>/dev/null; then
+        break
+    fi
+    sleep 0.1
+done
+if kill -0 "$default_pid" 2>/dev/null; then
+    kill "$default_pid" 2>/dev/null || true
+    wait "$default_pid" 2>/dev/null || true
+    fail 'default configuration unexpectedly allowed external hook coexistence'
+fi
+grep -Fq 'external nftables base-chain/hook conflict' "$default_log" \
+    || fail 'default external hook rejection was not reported'
+
+# Explicit opt-in permits coexistence while still using only owned tables.
+sed -i '/^schema_version = 1$/a allow_external_chains = true' "$config"
 
 "$daemon" --config "$config" --socket "$socket" --state "$state" >"$daemon_log" 2>&1 &
 daemon_pid=$!

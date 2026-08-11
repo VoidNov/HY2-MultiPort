@@ -211,7 +211,7 @@ impl Daemon {
             .clone();
         let candidates =
             build_active_profiles(validated, &prior, self.resolver.as_ref(), unix_now())?;
-        self.commit_candidates(candidates, &prior, reason)
+        self.commit_candidates(candidates, &prior, reason, config.allow_external_chains)
     }
 
     fn commit_candidates(
@@ -219,15 +219,18 @@ impl Daemon {
         candidates: Vec<ActiveProfile>,
         prior: &RuntimeState,
         reason: &str,
+        allow_external_chains: bool,
     ) -> Result<()> {
         let resolved = candidates
             .iter()
             .map(|profile| profile.resolved.clone())
             .collect::<Vec<_>>();
         let batch = generate_batch(&resolved);
-        self.nft
-            .reject_external_hook_conflicts()
-            .context("nft hook conflict preflight")?;
+        if !allow_external_chains {
+            self.nft
+                .reject_external_hook_conflicts()
+                .context("nft hook conflict preflight")?;
+        }
         let adjustments = self
             .network
             .preflight(&resolved)
@@ -367,8 +370,14 @@ impl Daemon {
             // A target switch is another full atomic transaction. On failure,
             // retain the old target/rules and report the affected profiles as
             // degraded rather than claiming a switch that never committed.
-            if let Err(error) = self.commit_candidates(active.clone(), &prior, "DNS target switch")
-            {
+            let allow_external_chains =
+                Config::from_path(&self.paths.config)?.allow_external_chains;
+            if let Err(error) = self.commit_candidates(
+                active.clone(),
+                &prior,
+                "DNS target switch",
+                allow_external_chains,
+            ) {
                 let mut degraded = before;
                 for (current, old) in active.iter().zip(&mut degraded) {
                     if current.resolved.destination != old.resolved.destination

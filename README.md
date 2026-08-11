@@ -6,8 +6,17 @@
 重载的本地 CLI，而不是另一套防火墙实现。
 
 本项目不迁移或管理既有 iptables chain、Shell 转发脚本或其他 nft table。
-当检测到外部 nftables base-chain 使用相同的 `prerouting`、`forward` 或
+默认情况下，当检测到外部 nftables base-chain 使用相同的 `prerouting`、`forward` 或
 `postrouting` hook 时，daemon 会拒绝应用，而不会猜测规则优先级。
+
+如果运维人员已经确认规则优先级和数据流安全，可以在配置顶层显式开启：
+
+```toml
+allow_external_chains = true
+```
+
+该开关只允许本项目自有 table 与外部 chain 共存，不会修改、清理、复用或调整
+外部 table/chain；省略该字段等同于 `false`。
 
 ## 架构
 
@@ -28,7 +37,8 @@ journald / syslog <────────────────── daemon
 
 ## 配置模型
 
-唯一人工维护的配置是 TOML，当前必须设置 `schema_version = 1`。每个
+唯一人工维护的配置是 TOML，当前必须设置 `schema_version = 1`。可选的
+`allow_external_chains` 默认是 `false`。每个
 `[[profiles]]` 只属于 `ipv4` 或 `ipv6`，并含一个必须确实属于本机接口的
 `listen_address`。同一监听地址、协议和端口不能在 profile 间重叠。
 
