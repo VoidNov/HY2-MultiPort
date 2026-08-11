@@ -1,0 +1,24 @@
+[Unit]
+Description=Native nftables port-forward daemon
+Documentation=file:///usr/share/doc/port-forward/README.md
+Wants=network-online.target
+After=network-online.target nftables.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+# port-forwardd performs its own all-or-nothing startup reload before binding
+# the socket. Do not add an independent nft ExecStartPre step here.
+ExecStart=/usr/local/sbin/port-forwardd --config /etc/port-forward/config.toml --socket /run/port-forwardd.sock --state /var/lib/port-forward/state.json
+ExecReload=/usr/local/bin/port-forward apply --socket /run/port-forwardd.sock
+Restart=on-failure
+RestartSec=5s
+
+# The daemon binds /run/port-forwardd.sock as root:root and explicitly sets
+# mode 0660; it additionally rejects all non-root Unix peer credentials.
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

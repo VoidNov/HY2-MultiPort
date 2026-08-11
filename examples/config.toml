@@ -1,0 +1,73 @@
+# 示例仅通过 TOML / 语义校验；192.0.2.0/24、198.51.100.0/24 与 2001:db8::/32
+# 是文档保留地址。部署前替换所有 listen_address、远程 host 和 source_cidrs，
+# 并保证每个 listen_address 唯一地属于本机一个接口。
+schema_version = 1
+
+# IPv4 redirect：不经过回环 DNAT，转到本机 5353。未指定 source_cidrs，因而对
+# 任意 IPv4 来源公开；生产中请按需要添加来源网段。
+[[profiles]]
+name = "dns-redirect-v4"
+family = "ipv4"
+listen_address = "192.0.2.10"
+protocols = ["udp"]
+
+[profiles.listen_ports]
+ports = [53]
+
+[profiles.target]
+kind = "redirect"
+port = 5353
+
+# IPv4 loopback DNAT：只有明确允许时才会把入站包 DNAT 到 127.0.0.1。daemon
+# 将确认监听地址所属入口接口，并仅在可唯一确定时启用该接口 route_localnet。
+[[profiles]]
+name = "admin-loopback-v4"
+family = "ipv4"
+listen_address = "192.0.2.11"
+protocols = ["tcp"]
+source_cidrs = ["198.51.100.0/24"]
+allow_route_localnet = true
+
+[profiles.listen_ports]
+ports = [8443]
+
+[profiles.target]
+kind = "loopback-dnat"
+port = 9443
+
+# 远程 IPv4：source_mode 为必填项。masquerade 适合远端没有到客户端来源路由的
+# 常见场景；若远端具备正确回程路由，改为 preserve 以保留原始客户端地址。
+[[profiles]]
+name = "origin-v4"
+family = "ipv4"
+listen_address = "192.0.2.12"
+protocols = ["tcp", "udp"]
+source_cidrs = ["198.51.100.0/24"]
+
+[profiles.listen_ports]
+range_start = 20000
+range_end = 65536 # 右开区间；实际最大端口为 65535
+suffix = 443
+
+[profiles.target]
+kind = "remote"
+host = "198.51.100.53" # 也可以是同族 FQDN；会由系统 resolver 刷新
+port = 443
+source_mode = "masquerade"
+
+# 远程 IPv6：没有 source_mode。实现只生成 DNAT 和 FORWARD 规则，绝不生成
+# NAT66；请由网络/远端配置保证到客户端来源的 IPv6 回程路由。
+[[profiles]]
+name = "origin-v6"
+family = "ipv6"
+listen_address = "2001:db8:100::10"
+protocols = ["tcp"]
+source_cidrs = ["2001:db8:feed::/48"]
+
+[profiles.listen_ports]
+ports = [10443]
+
+[profiles.target]
+kind = "remote"
+host = "2001:db8:200::53" # 也可以是同族 FQDN
+port = 443

@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+
+name="port-forwardd"
+description="Native nftables port-forward daemon"
+
+command="/usr/local/sbin/port-forwardd"
+command_args="--config /etc/port-forward/config.toml --socket /run/port-forwardd.sock --state /var/lib/port-forward/state.json"
+command_user="root:root"
+supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
+
+depend() {
+	need net
+	after nftables
+}
+
+start_pre() {
+	# The daemon performs its own full startup reload. Keep configuration private.
+	umask 0077
+}

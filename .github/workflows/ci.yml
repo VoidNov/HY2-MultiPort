@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-quality:
+    name: Rust quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo check --all-targets
+      - run: cargo test --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
+
+  integration-nft:
+    name: nftables network-namespace integration
+    needs: rust-quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install nftables and iproute2
+        run: sudo apt-get update && sudo apt-get install --yes nftables iproute2
+      - name: Build daemon and CLI for the namespace test
+        run: cargo build --bins
+      - name: Run privileged nftables namespace checks
+        run: sudo ./tests/integration_nft.sh
+
+      # GitHub-hosted runner kernel policies may forbid network namespaces or
+      # nftables despite sudo. In that case the script prints SKIP and exits 0:
+      # this job is not evidence that integration assertions ran. A runner with
+      # root + CAP_NET_ADMIN + unshare support executes all assertions and any
+      # failure exits non-zero.

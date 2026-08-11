@@ -1,0 +1,39 @@
+[package]
+name = "hy2-multiport"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Native nftables port-forward manager for Linux"
+
+[lib]
+name = "hy2_multiport"
+path = "src/lib.rs"
+
+[[bin]]
+name = "port-forwardd"
+path = "src/bin/port-forwardd.rs"
+
+[[bin]]
+name = "port-forward"
+path = "src/bin/port-forward.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+hickory-resolver = { version = "0.24", default-features = false, features = ["system-config", "tokio-runtime"] }
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time", "signal"] }
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3.15"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
