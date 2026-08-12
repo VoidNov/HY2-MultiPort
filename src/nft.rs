@@ -294,6 +294,26 @@ impl NftCommand {
     /// Returns an error when `nft` cannot run, its ruleset cannot be read as
     /// JSON, or an external base chain uses a managed hook.
     pub fn reject_external_hook_conflicts(&self) -> Result<()> {
+        let conflicts = self.external_hook_conflicts()?;
+        if conflicts.is_empty() {
+            Ok(())
+        } else {
+            bail!(
+                "external nftables base-chain/hook conflict; refusing to guess ordering: {}",
+                conflicts.join(", ")
+            );
+        }
+    }
+
+    /// Lists external base chains that use hooks owned by port forwarding.
+    /// This is strictly read-only and is shared by daemon preflight and the
+    /// operator-facing doctor command.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `nft` cannot run or its JSON ruleset cannot be
+    /// inspected.
+    pub fn external_hook_conflicts(&self) -> Result<Vec<String>> {
         let output = Command::new(&self.executable)
             .args(["-j", "list", "ruleset"])
             .output()
@@ -325,14 +345,7 @@ impl NftCommand {
                     )
                 })
                 .collect();
-        if conflicts.is_empty() {
-            Ok(())
-        } else {
-            bail!(
-                "external nftables base-chain/hook conflict; refusing to guess ordering: {}",
-                conflicts.into_iter().collect::<Vec<_>>().join(", ")
-            );
-        }
+        Ok(conflicts.into_iter().collect())
     }
 
     /// Checks an nftables batch without applying it.

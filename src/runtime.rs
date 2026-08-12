@@ -202,7 +202,7 @@ impl Daemon {
     /// Panics if the daemon state mutex has been poisoned.
     pub fn reload(&self, reason: &str) -> Result<()> {
         let config = Config::from_path(&self.paths.config)?;
-        let validated = config.validate().map_err(anyhow::Error::from)?;
+        let validated = config.validate_deployable().map_err(anyhow::Error::from)?;
         let prior = self
             .data
             .lock()

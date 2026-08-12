@@ -5,7 +5,7 @@
 set -euo pipefail
 
 readonly PROGRAM_NAME='HY2-MultiPort installer'
-readonly DEFAULT_VERSION='0.0.3'
+readonly DEFAULT_VERSION='0.0.4'
 readonly DEFAULT_BASE_URL='https://github.com/VoidNov/HY2-MultiPort/releases/download'
 
 # The environment overrides are primarily useful for package builders and the
@@ -49,7 +49,7 @@ usage() {
 中的版本化压缩包和 SHA256SUMS，绝不下载 main 分支二进制。
 
 选项：
-  --version VERSION  固定版本，例如 0.0.3 或 v0.0.3（默认 0.0.3）
+  --version VERSION  固定版本，例如 0.0.4 或 v0.0.4（默认 0.0.4）
   --base-url URL     Release 下载根目录（默认 GitHub releases/download）
   --dry-run          下载、校验和解包检查，但不修改文件、服务或 nftables
   --yes              跳过 uninstall 的交互确认
@@ -60,7 +60,7 @@ usage() {
 
 示例：
   curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash
-  sudo bash install.sh --version v0.0.3
+  sudo bash install.sh --version v0.0.4
   sudo bash install.sh status
   sudo bash install.sh uninstall --yes
 USAGE
@@ -230,6 +230,30 @@ service_action() {
     esac
 }
 
+print_first_use_guide() {
+    note '============================================================'
+    note '首次使用：5 分钟配置向导（服务尚未启动）'
+    note "1. 运行：sudo $BIN_DIR/port-forward init"
+    note "2. 编辑并复查：sudoedit $CONFIG_PATH"
+    note "3. 验证：sudo $BIN_DIR/port-forward validate --config $CONFIG_PATH"
+    note "4. 诊断：sudo $BIN_DIR/port-forward doctor --config $CONFIG_PATH"
+    note "5. 仅在没有 ERROR 后启动：sudo $BIN_DIR/port-forward start"
+    note '向导只接受真实本机地址；非交互环境只会生成带 TODO、无法启动的模板。'
+    note '若发现 NetBird 或其他 nft hook，默认会拒绝启动；确认规则顺序后才手动设置 allow_external_chains = true。'
+    note '============================================================'
+}
+
+offer_first_use_wizard() {
+    [[ -t 0 && -t 1 ]] || return 0
+    local reply
+    read -r -p '现在进入 port-forward 首次配置向导？[y/N] ' reply
+    if [[ $reply == y || $reply == Y ]]; then
+        "$BIN_DIR/port-forward" init --config "$CONFIG_PATH"
+    else
+        note "稍后运行：sudo $BIN_DIR/port-forward init"
+    fi
+}
+
 install_or_upgrade() {
     local version target tag asset package archive sums extracted manager backup_dir had_config=false config_valid=false
     require_root
@@ -241,7 +265,7 @@ install_or_upgrade() {
         die '--enable/--start 需要 systemd 或 OpenRC；当前系统不支持服务管理。二进制尚未写入。'
     fi
     target=$(detect_target)
-    version=$(normalize_version "$requested_version") || die "版本格式无效：$requested_version（应为 0.0.3 或 v0.0.3）"
+    version=$(normalize_version "$requested_version") || die "版本格式无效：$requested_version（应为 0.0.4 或 v0.0.4）"
     tag="v$version"
     asset="port-forward-${version}-${target}.tar.gz"
     package="port-forward-${version}-${target}"
@@ -283,8 +307,7 @@ install_or_upgrade() {
     run install -d -m0700 "$ETC_DIR" "$STATE_DIR"
     if [[ $had_config == false ]]; then
         install_atomically "$extracted/$package/examples/config.toml" "$EXAMPLE_PATH" 0600
-        note "未发现配置：示例已保存为 $EXAMPLE_PATH（不会自动启动服务）。"
-        note "下一步：sudo port-forward init && sudoedit $CONFIG_PATH && sudo port-forward validate"
+        note "未发现配置：文档示例已保存为 $EXAMPLE_PATH（不会自动启动服务，也不会复制到正式配置）。"
     else
         note "已保护现有配置：$CONFIG_PATH（备份快照：$backup_dir）"
         if config_is_valid; then
@@ -314,6 +337,10 @@ install_or_upgrade() {
     fi
 
     note "安装完成：$BIN_DIR/port-forward version"
+    if [[ $had_config == false ]]; then
+        print_first_use_guide
+        offer_first_use_wizard
+    fi
     if [[ $had_config == true && $config_valid == true ]]; then
         note "配置已验证。服务默认未启用；需要时运行：sudo port-forward start"
     fi

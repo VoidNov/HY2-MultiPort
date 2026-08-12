@@ -1,6 +1,7 @@
-# 示例仅通过 TOML / 语义校验；192.0.2.0/24、198.51.100.0/24 与 2001:db8::/32
-# 是文档保留地址。部署前替换所有 listen_address、远程 host 和 source_cidrs，
-# 并保证每个 listen_address 唯一地属于本机一个接口。
+# 文档示例：192.0.2.0/24、198.51.100.0/24 与 2001:db8::/32 是文档保留地址。
+# `port-forward init` 不会复制本文件；请使用向导生成真实配置。若手动参考本文件，
+# 部署前必须替换所有 listen_address、远程 host 和 source_cidrs。`validate`、
+# daemon 与 `start` 会拒绝这些保留地址，且每个 listen_address 必须属于本机接口。
 schema_version = 1
 # 默认 false：检测到外部 nftables base chain/hook 时拒绝应用。
 # 仅在确认规则优先级和数据流安全后显式改为 true；不会修改外部 chain。

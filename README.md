@@ -4,27 +4,34 @@
 curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash
 ```
 
-当前默认安装版本是 **0.0.3**。这条命令只下载 GitHub Release 中与本机架构匹配的
+当前默认安装版本是 **0.0.4**。这条命令只下载 GitHub Release 中与本机架构匹配的
 版本化资产，并在安装前验证 `SHA256SUMS`；它不会下载或执行 main 分支的二进制。
 
-## 中文 5 分钟路径（0.0.3）
+## 中文 5 分钟路径（0.0.4）
 
 1. 在 Linux root 主机执行上面的安装命令。安装器会保留已有
-   `/etc/port-forward/config.toml`；首次安装只创建
-   `/etc/port-forward/config.toml.example`，不会因为缺配置而自动启动服务。
-2. 首次使用运行 `sudo port-forward init`，再用
-   `sudoedit /etc/port-forward/config.toml` 填入真实监听地址、目标和来源网段。
-   `init` 从不覆盖已有配置。
-3. 验证并启动：`sudo port-forward validate && sudo port-forward start`。需要开机启动时，
-   再执行 `sudo systemctl enable port-forwardd`（或 OpenRC 的
-   `sudo rc-update add port-forwardd default`）。
-4. 排障使用 `sudo port-forward doctor`（机器可读输出：`--json`）；运行状态使用
-   `sudo port-forward status --json`，日志使用 `sudo port-forward logs`。
+   `/etc/port-forward/config.toml`；首次安装只保存文档示例，不会复制它、不启动服务，
+   并显示醒目的 5 分钟向导。交互式终端可选择立即进入向导；`curl | sudo bash` 等
+   非交互管道绝不等待输入。
+2. 运行 `sudo port-forward init`。向导列出 `ip -brief address` 的本机 IPv4/IPv6
+   地址，要求选择监听地址、协议、端口、目标类型（`redirect` / `remote` /
+   `loopback-dnat`）、目标与来源 CIDR，并生成最小可编辑配置。`init` 从不覆盖已有
+   配置，也不会复制 192.0.2/198.51.100/203.0.113/2001:db8 文档地址。
+   无终端时使用 `sudo port-forward init --non-interactive`（或 `--template`）只会生成
+   明确带 `TODO`、刻意不能启动的配置。
+3. 复查与编辑：`sudoedit /etc/port-forward/config.toml`；依次运行
+   `sudo port-forward validate`、`sudo port-forward doctor`，修复全部 `ERROR` 后再执行
+   `sudo port-forward start`。需要开机启动时，再执行 `sudo systemctl enable port-forwardd`
+   （或 OpenRC 的 `sudo rc-update add port-forwardd default`）。
+4. `start` / `restart` 只有在 10 秒内同时确认 daemon 为 active 且
+   `/run/port-forwardd.sock` 可用时才会报告成功。失败会直接显示 systemd 状态与最近
+   100 行 journal（OpenRC 则使用 service 状态和 journald/syslog）。
+   `sudo port-forward logs` 在 socket 不存在时也会自动显示这些启动日志。
 
 升级时可固定版本并保留配置：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash -s -- upgrade --version 0.0.3
+curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash -s -- upgrade --version 0.0.4
 ```
 
 回滚也是以目标 Release 版本运行同一条命令；安装器保存此前安装文件的备份，且不改动
@@ -48,6 +55,11 @@ sudo bash install.sh uninstall --yes --purge-config
 本项目不迁移或管理既有 iptables chain、Shell 转发脚本或其他 nft table。
 默认情况下，当检测到外部 nftables base-chain 使用相同的 `prerouting`、`forward` 或
 `postrouting` hook 时，daemon 会拒绝应用，而不会猜测规则优先级。
+
+`doctor` 会只读列出本机地址、文档保留地址错误、依赖、控制 socket 和外部 hook。
+若已运行 NetBird，常见结果是看到 `ip` / `ip6` 的 filter、mangle、nat 或 netbird
+base chain；这不是安装器可自动修复的情况。请先确认 hook priority、包流和安全边界，
+再手动编辑配置开启下列开关；程序不会自动改为 `true`，也永不修改外部 nft table/chain。
 
 如果运维人员已经确认规则优先级和数据流安全，可以在配置顶层显式开启：
 
@@ -77,7 +89,7 @@ journald / syslog <────────────────── daemon
 
 ## nftables 兼容性、升级与回滚
 
-v0.0.3 不再使用 `destroy table`。每次重载会先通过 `nft -j list tables` 查询
+v0.0.4 保留不使用 `destroy table` 的兼容策略。每次重载会先通过 `nft -j list tables` 查询
 `port_forward_v4` 与 `port_forward_v6` 是否存在：首次启动只创建 table；已有自有
 table 的重载才在同一个 batch 内先执行相应的 `delete table`、再重建。随后仍严格
 按 `nft -c -f -` 预检成功、再单次 `nft -f -` 原子提交的顺序执行。因此预检失败
@@ -89,7 +101,7 @@ nftables 1.0.6、1.0.9、1.1.3（分别对应 Debian 12、Ubuntu 24.04、Debian 
 最低可用承诺。规则使用稳定的 `table ip`/`table ip6`、NAT/filter base chain 和数值
 priority：prerouting `-100`、forward `0`、postrouting `100`，不依赖命名 priority。
 
-v0.0.3 保留了 v0.0.2 消除旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
+v0.0.4 保留了 v0.0.2 消除旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
 组合；这不等于项目已验证某个更低的内核下限。内核的 nf_tables/NAT 功能、发行版
 backport 和本机防火墙策略仍会影响可用性，目前没有经过验证的精确最低内核版本。
 部署前请在目标内核上运行下文的 namespace 集成测试或等价的 `nft -c` 验证。
@@ -98,7 +110,7 @@ backport 和本机防火墙策略仍会影响可用性，目前没有经过验�
 会识别并原子替换同名自有 table，不接触外部规则。回滚前应保存配置和
 `nft list table ip port_forward_v4` / `nft list table ip6 port_forward_v6` 输出。若回滚
 到 v0.0.1，目标环境仍必须满足其 `destroy table` 前提；在不支持该命令的旧环境中应
-保留 v0.0.3，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
+保留 v0.0.4，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
 
 ## 配置模型
 
@@ -130,8 +142,9 @@ FQDN 仅使用系统 resolver。成功时选择同族活动地址、按 TTL 的�
 60 秒至 15 分钟并加入少量抖动）刷新；刷新失败保持当前地址并在状态中标为
 `degraded`。回环、未指定、组播、广播及 IPv6 link-local 的远程目标会被拒绝。
 
-可直接从 [examples/config.toml](examples/config.toml) 开始。里面的地址是文档
-保留地址，必须替换为真实地址，不能直接用于生产。
+可参考 [examples/config.toml](examples/config.toml)，但首次部署应优先使用
+`port-forward init`。示例中的地址是文档保留地址，`validate`/`start`/daemon 都会拒绝，
+因此不能直接用于生产。
 
 ## 路径与权限
 
@@ -159,9 +172,10 @@ sudo install -m0600 examples/config.toml /etc/port-forward/config.toml.example
 sudo /usr/local/bin/port-forward init
 sudoedit /etc/port-forward/config.toml
 sudo /usr/local/bin/port-forward validate --config /etc/port-forward/config.toml
+sudo /usr/local/bin/port-forward doctor --config /etc/port-forward/config.toml
 ```
 
-确认地址、路由和来源网段后，可以临时启动 daemon：
+确认地址、路由、来源网段及外部 hook 顺序后，可以启动 daemon：
 
 ```bash
 sudo /usr/local/sbin/port-forwardd
@@ -173,7 +187,8 @@ sudo /usr/local/bin/port-forward apply
 
 `apply` 只请求 daemon 对当前 TOML 执行一次完整、全有或全无的重载；它不写配置。
 daemon 不可用时，`status` 会尝试读取 state 文件；其中已逾期的 DNS 刷新会显示为
-降级。
+降级。`logs` 在 daemon 已运行时读取内存事件；socket 缺失时会明确提示 daemon 未运行，
+并回退显示 systemd journal 或 OpenRC/syslog 启动日志。
 
 ### systemd
 

@@ -212,6 +212,67 @@ impl Config {
             })
             .collect()
     }
+    /// Performs the additional checks required before a configuration can be
+    /// deployed. Documentation-only addresses are intentionally accepted by
+    /// [`Self::validate`] so examples and rule rendering remain testable, but
+    /// they must never pass a CLI/daemon startup path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the configuration is incomplete or contains a
+    /// documentation-reserved listener, source, or literal remote target.
+    pub fn validate_deployable(&self) -> Result<Vec<ValidatedProfile>, ConfigError> {
+        let profiles = self.validate()?;
+        if profiles.is_empty() {
+            return Err(ConfigError::Semantic(
+                "profiles must contain at least one complete forwarding profile; run port-forward init"
+                    .to_owned(),
+            ));
+        }
+        for validated in &profiles {
+            let profile = &validated.profile;
+            reject_placeholder(&profile.name, &profile.name, "name")?;
+            reject_placeholder(&profile.name, &profile.listen_address, "listen_address")?;
+            if is_documentation_address(validated.listen_ip) {
+                return Err(ConfigError::Semantic(format!(
+                    "profile {:?} listen_address {} is a documentation-reserved address; replace it with an address assigned to this host",
+                    profile.name, validated.listen_ip
+                )));
+            }
+            for source in &validated.source_cidrs {
+                reject_placeholder(&profile.name, source, "source_cidrs")?;
+                let address = source
+                    .split('/')
+                    .next()
+                    .unwrap_or_default()
+                    .parse()
+                    .map_err(|_| {
+                        ConfigError::Semantic(format!(
+                            "profile {:?} has invalid source CIDR {source:?}",
+                            profile.name
+                        ))
+                    })?;
+                if is_documentation_address(address) {
+                    return Err(ConfigError::Semantic(format!(
+                        "profile {:?} source CIDR {source:?} uses a documentation-reserved address; replace source_cidrs",
+                        profile.name
+                    )));
+                }
+            }
+            if let Target::Remote { host, .. } = &profile.target {
+                reject_placeholder(&profile.name, host, "target.host")?;
+                if let Ok(address) = host.parse::<IpAddr>()
+                    && is_documentation_address(address)
+                {
+                    return Err(ConfigError::Semantic(format!(
+                        "profile {:?} remote target {address} is documentation-reserved; replace target.host with a real destination",
+                        profile.name
+                    )));
+                }
+            }
+        }
+        Ok(profiles)
+    }
 }
 
 impl Profile {
@@ -457,6 +518,30 @@ fn validate_source_cidrs(
     Ok(sources)
 }
 
+/// Returns true for the IETF documentation-only address ranges. They are
+/// useful in manuals, but a daemon must never claim that they are deployable
+/// listener, source, or literal remote addresses.
+#[must_use]
+pub fn is_documentation_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => matches!(
+            address.octets(),
+            [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _]
+        ),
+        IpAddr::V6(address) => address.octets()[..4] == [0x20, 0x01, 0x0d, 0xb8],
+    }
+}
+
+fn reject_placeholder(profile_name: &str, value: &str, field: &str) -> Result<(), ConfigError> {
+    if value.trim().to_ascii_uppercase().contains("TODO") {
+        Err(ConfigError::Semantic(format!(
+            "profile {profile_name:?} field {field} still contains TODO value {value:?}; complete the first-use wizard or edit the field before start"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 fn decimal_width(value: u32) -> u32 {
     if value == 0 { 1 } else { value.ilog10() + 1 }
 }
@@ -576,5 +661,32 @@ port = 53
     fn external_chain_coexistence_is_opt_in() {
         assert!(!config("schema_version = 1").allow_external_chains);
         assert!(config("schema_version = 1\nallow_external_chains = true").allow_external_chains);
+    }
+
+    #[test]
+    fn deployable_validation_rejects_documentation_addresses_and_todos() {
+        let documentation = REMOTE;
+        assert!(
+            Config::from_toml(documentation)
+                .unwrap()
+                .validate_deployable()
+                .unwrap_err()
+                .to_string()
+                .contains("documentation-reserved")
+        );
+
+        let todo = REMOTE
+            .replace("192.0.2.10", "10.0.0.10")
+            .replace("198.51.100.7", "10.0.0.7")
+            .replace("name = \"web\"", "name = \"TODO-profile\"")
+            .replace("198.51.100.0/24", "10.0.0.0/24");
+        assert!(
+            Config::from_toml(&todo)
+                .unwrap()
+                .validate_deployable()
+                .unwrap_err()
+                .to_string()
+                .contains("TODO")
+        );
     }
 }

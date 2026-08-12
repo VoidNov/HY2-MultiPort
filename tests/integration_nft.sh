@@ -84,8 +84,10 @@ export NFT_PRECHECK_FAILURE_MARKER="$nft_precheck_failure_marker"
 ip link set lo up || fail 'cannot bring loopback up in network namespace'
 ip address add 127.0.0.2/8 dev lo || fail 'cannot add IPv4 listener address'
 ip address add 127.0.0.3/8 dev lo || fail 'cannot add IPv4 remote listener address'
-ip -6 address add 2001:db8:100::1/64 dev lo || fail 'cannot add IPv6 listener address'
-ip -6 route add 2001:db8:200::/64 dev lo || fail 'cannot add IPv6 route for daemon preflight'
+ip address add 10.0.0.1/24 dev lo || fail 'cannot add IPv4 remote route address'
+ip route add 10.0.0.0/24 dev lo || fail 'cannot add IPv4 route for daemon preflight'
+ip -6 address add fd00:100::1/64 dev lo || fail 'cannot add IPv6 listener address'
+ip -6 route add fd00:200::/64 dev lo || fail 'cannot add IPv6 route for daemon preflight'
 
 # A first installation must not require an owned table to exist. In particular,
 # the daemon must not emit `delete table` or the newer `destroy table` here.
@@ -141,21 +143,21 @@ source_cidrs = ["127.0.0.0/8"]
 ports = [10443]
 [profiles.target]
 kind = "remote"
-host = "198.51.100.53"
+host = "10.0.0.53"
 port = 443
 source_mode = "preserve"
 
 [[profiles]]
 name = "remote-v6"
 family = "ipv6"
-listen_address = "2001:db8:100::1"
+listen_address = "fd00:100::1"
 protocols = ["tcp"]
-source_cidrs = ["2001:db8:feed::/48"]
+source_cidrs = ["fd00:feed::/48"]
 [profiles.listen_ports]
 ports = [10443]
 [profiles.target]
 kind = "remote"
-host = "2001:db8:200::53"
+host = "fd00:200::53"
 port = 443
 CONFIG
 
@@ -209,7 +211,7 @@ if grep -Eqi 'masquerade|snat|postrouting' <<<"$ipv6_rules"; then
     printf '%s\n' "$ipv6_rules" >&2
     fail 'IPv6 table contains NAT66/postrouting'
 fi
-grep -Fq 'dnat to [2001:db8:200::53]:443' <<<"$ipv6_rules" || fail 'IPv6 remote DNAT rule is absent'
+grep -Fq 'dnat to [fd00:200::53]:443' <<<"$ipv6_rules" || fail 'IPv6 remote DNAT rule is absent'
 
 # Reload a changed valid configuration. This can only succeed if the daemon
 # detected existing owned tables and placed `delete table` before recreating
