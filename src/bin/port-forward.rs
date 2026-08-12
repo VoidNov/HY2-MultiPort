@@ -79,6 +79,11 @@ enum Command {
         #[arg(long, default_value = hy2_multiport::DEFAULT_SOCKET_PATH)]
         socket: PathBuf,
     },
+    /// Migrate unambiguous legacy loopback remote targets to local-service targets.
+    Migrate {
+        #[arg(long, default_value = hy2_multiport::DEFAULT_CONFIG_PATH)]
+        config: PathBuf,
+    },
     /// Safely create a starter config without ever overwriting an existing one.
     Init {
         #[arg(long, default_value = hy2_multiport::DEFAULT_CONFIG_PATH)]
@@ -156,6 +161,7 @@ async fn main() -> Result<()> {
             config,
             socket,
         } => remove_profile(&config, &socket, &name).await?,
+        Command::Migrate { config } => migrate_config_file(&config)?,
         Command::Init {
             config,
             template,
@@ -323,6 +329,28 @@ async fn init_config(config: &Path, force_template: bool) -> Result<()> {
     )
     .await?;
     print_setup_next_steps(config);
+    Ok(())
+}
+
+fn migrate_config_file(config: &Path) -> Result<()> {
+    let source = fs::read_to_string(config)
+        .with_context(|| format!("无法读取配置 {}；未执行迁移", config.display()))?;
+    let mut parsed: Config = toml::from_str(&source)
+        .with_context(|| format!("配置 {} 不是可迁移的 TOML；未执行迁移", config.display()))?;
+    if !parsed.migrate_legacy_local_targets() {
+        println!("配置无需迁移：未发现明确的旧式本机回环 remote 目标。");
+        return Ok(());
+    }
+    let rendered = toml::to_string_pretty(&parsed).context("无法序列化迁移后的配置")?;
+    let previous = fs::read(config)
+        .with_context(|| format!("无法备份配置 {}；未执行迁移", config.display()))?;
+    let backup = backup_configuration(config, &previous)?;
+    atomic_write_config(config, rendered.as_bytes())?;
+    println!(
+        "已迁移旧式本机回环目标为本机服务语义：{}（备份：{}）",
+        config.display(),
+        backup.display()
+    );
     Ok(())
 }
 
@@ -938,6 +966,23 @@ async fn commit_config_update(config: &Path, candidate: &Config, socket: &Path) 
         .map(|contents| backup_configuration(config, contents))
         .transpose()?;
     atomic_write_config(config, rendered.as_bytes())?;
+    if !socket_is_usable(socket) {
+        let start_result = service_manager()
+            .context("配置已写入，但未检测到可用的 systemd/OpenRC；无法自动启动 daemon")
+            .and_then(|_| {
+                run_service_action(ServiceAction::Start)
+                    .context("配置已写入，但 daemon 启动失败；旧 nftables 规则未修改")
+            });
+        if let Err(error) = start_result {
+            let restore = match &previous {
+                Some(contents) => atomic_write_config(config, contents),
+                None => fs::remove_file(config)
+                    .with_context(|| format!("无法移除未能启动的新配置 {}", config.display())),
+            };
+            restore.context("daemon 启动失败后无法恢复原配置；请使用自动备份手动恢复")?;
+            bail!("自动启动 daemon 失败，已恢复原配置：{error:#}");
+        }
+    }
     if socket_is_usable(socket) {
         if let Err(error) = control::call(socket, &Request::Apply).await {
             let restore = match &previous {
@@ -955,20 +1000,14 @@ async fn commit_config_update(config: &Path, candidate: &Config, socket: &Path) 
             )
         }
         println!(
-            "配置已写入并由 daemon 成功应用{}。",
+            "配置已验证、daemon 已启动并成功应用{}。",
             backup
                 .as_ref()
                 .map(|path| format!("（备份：{}）", path.display()))
                 .unwrap_or_default()
         );
     } else {
-        println!(
-            "配置已安全写入{}。daemon 当前未运行，尚未应用 nftables；下一步运行 validate、doctor，再 start。",
-            backup
-                .as_ref()
-                .map(|path| format!("（备份：{}）", path.display()))
-                .unwrap_or_default()
-        );
+        bail!("daemon 启动后控制 socket 仍不可用：{}", socket.display());
     }
     Ok(())
 }

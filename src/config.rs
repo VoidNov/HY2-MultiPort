@@ -130,6 +130,37 @@ pub struct ValidatedProfile {
 }
 
 impl Config {
+    /// Migrate the unambiguous legacy representation of a local service.
+    ///
+    /// Older releases allowed `target.kind = "remote"` with `127.0.0.1`,
+    /// `::1`, or `localhost`. These destinations are necessarily local to
+    /// the forwarding host, so preserving that configuration as `remote`
+    /// would be both misleading and rejected by current validation.
+    pub fn migrate_legacy_local_targets(&mut self) -> bool {
+        let mut changed = false;
+        for profile in &mut self.profiles {
+            let Target::Remote { host, port, .. } = &profile.target else {
+                continue;
+            };
+            let is_ipv4_loopback = host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback() && address.is_ipv4());
+            let is_ipv6_loopback = host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback() && address.is_ipv6());
+            let is_localhost = host.eq_ignore_ascii_case("localhost");
+            if is_ipv4_loopback || (is_localhost && profile.family == AddressFamily::Ipv4) {
+                profile.target = Target::LoopbackDnat { port: *port };
+                profile.allow_route_localnet = true;
+                changed = true;
+            } else if is_ipv6_loopback || (is_localhost && profile.family == AddressFamily::Ipv6) {
+                profile.target = Target::Redirect { port: *port };
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// Loads, parses, and validates a configuration file.
     ///
     /// # Errors
@@ -694,5 +725,57 @@ port = 53
                 .to_string()
                 .contains("TODO")
         );
+    }
+
+    #[test]
+    fn migrates_legacy_ipv4_loopback_remote_to_loopback_dnat() {
+        let mut parsed: Config = toml::from_str(
+            r#"
+schema_version = 1
+[[profiles]]
+name = "legacy-local"
+family = "ipv4"
+listen_address = "10.0.0.10"
+protocols = ["udp"]
+[profiles.listen_ports]
+ports = [20443]
+[profiles.target]
+kind = "remote"
+host = "127.0.0.1"
+port = 443
+source_mode = "masquerade"
+"#,
+        )
+        .unwrap();
+        assert!(parsed.migrate_legacy_local_targets());
+        assert!(matches!(
+            parsed.profiles[0].target,
+            Target::LoopbackDnat { port: 443 }
+        ));
+        assert!(parsed.profiles[0].allow_route_localnet);
+        assert!(parsed.validate_deployable().is_ok());
+    }
+
+    #[test]
+    fn migration_does_not_change_real_remote_targets() {
+        let mut parsed = config(
+            r#"
+schema_version = 1
+[[profiles]]
+name = "real-remote"
+family = "ipv4"
+listen_address = "10.0.0.10"
+protocols = ["udp"]
+[profiles.listen_ports]
+ports = [20443]
+[profiles.target]
+kind = "remote"
+host = "198.18.0.7"
+port = 443
+source_mode = "masquerade"
+"#,
+        );
+        assert!(!parsed.migrate_legacy_local_targets());
+        assert!(matches!(parsed.profiles[0].target, Target::Remote { .. }));
     }
 }
