@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag matching Cargo.toml, for example v0.0.2"
+        description: "Release tag matching Cargo.toml, for example v0.0.3"
         required: true
         type: string
 
@@ -69,7 +69,10 @@ jobs:
             printf 'expected three release archives, found %s\n' "${#archives[@]}" >&2
             exit 1
           }
-          sha256sum "${archives[@]}" >release-assets/SHA256SUMS
+          (
+            cd release-assets
+            sha256sum port-forward-*.tar.gz >SHA256SUMS
+          )
           printf 'tag=%s\n' "$tag" >>"$GITHUB_OUTPUT"
       - name: Create release if it does not already exist
         env:
@@ -84,4 +87,5 @@ jobs:
           gh release create "$TAG" release-assets/port-forward-*.tar.gz release-assets/SHA256SUMS \
             --title "HY2-MultiPort $TAG" \
             --target "$GITHUB_SHA" \
+            --notes "Assets: x86_64 GNU, x86_64 musl, and aarch64 musl tarballs, plus SHA256SUMS for install.sh verification." \
             --generate-notes

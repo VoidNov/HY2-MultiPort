@@ -9,12 +9,18 @@ Type=simple
 User=root
 Group=root
 UMask=0077
+# A missing or invalid configuration is an operator action item, not a reason
+# to spin in a restart loop. Exit status 78 is deliberately excluded from
+# Restart=on-failure below and the message is visible in `journalctl -u`.
+ExecStartPre=/bin/sh -c 'test -s /etc/port-forward/config.toml || { echo "port-forwardd: missing /etc/port-forward/config.toml; run: sudo port-forward init" >&2; exit 78; }'
+ExecStartPre=/bin/sh -c '/usr/local/bin/port-forward validate --config /etc/port-forward/config.toml || exit 78'
 # port-forwardd performs its own all-or-nothing startup reload before binding
 # the socket. Do not add an independent nft ExecStartPre step here.
 ExecStart=/usr/local/sbin/port-forwardd --config /etc/port-forward/config.toml --socket /run/port-forwardd.sock --state /var/lib/port-forward/state.json
 ExecReload=/usr/local/bin/port-forward apply --socket /run/port-forwardd.sock
 Restart=on-failure
 RestartSec=5s
+RestartPreventExitStatus=78
 
 # The daemon binds /run/port-forwardd.sock as root:root and explicitly sets
 # mode 0660; it additionally rejects all non-root Unix peer credentials.

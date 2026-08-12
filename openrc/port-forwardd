@@ -16,6 +16,11 @@ depend() {
 }
 
 start_pre() {
-	# The daemon performs its own full startup reload. Keep configuration private.
+	# A missing/invalid configuration is actionable and must not be respawned.
 	umask 0077
+	if [ ! -s /etc/port-forward/config.toml ]; then
+		eerror "missing /etc/port-forward/config.toml; run: sudo port-forward init"
+		return 1
+	fi
+	/usr/local/bin/port-forward validate --config /etc/port-forward/config.toml || return 1
 }

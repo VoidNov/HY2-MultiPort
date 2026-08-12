@@ -22,6 +22,21 @@ jobs:
       - run: cargo test --locked --all-targets
       - run: cargo clippy --locked --all-targets -- -D warnings
 
+  installer:
+    name: Installer shell checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+      - name: Parse shell scripts
+        run: |
+          while IFS= read -r script; do bash -n "$script"; done < <(find . -type f -name '*.sh' -not -path './.git/*' -print)
+      - name: Run installer fixtures
+        run: ./tests/installer_test.sh
+      - name: Lint shell scripts
+        run: shellcheck install.sh scripts/*.sh tests/*.sh
+
   integration-nft:
     name: nftables network-namespace integration
     needs: rust-quality

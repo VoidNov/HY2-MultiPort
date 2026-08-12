@@ -1,5 +1,45 @@
 # HY2-MultiPort / port-forward
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash
+```
+
+当前默认安装版本是 **0.0.3**。这条命令只下载 GitHub Release 中与本机架构匹配的
+版本化资产，并在安装前验证 `SHA256SUMS`；它不会下载或执行 main 分支的二进制。
+
+## 中文 5 分钟路径（0.0.3）
+
+1. 在 Linux root 主机执行上面的安装命令。安装器会保留已有
+   `/etc/port-forward/config.toml`；首次安装只创建
+   `/etc/port-forward/config.toml.example`，不会因为缺配置而自动启动服务。
+2. 首次使用运行 `sudo port-forward init`，再用
+   `sudoedit /etc/port-forward/config.toml` 填入真实监听地址、目标和来源网段。
+   `init` 从不覆盖已有配置。
+3. 验证并启动：`sudo port-forward validate && sudo port-forward start`。需要开机启动时，
+   再执行 `sudo systemctl enable port-forwardd`（或 OpenRC 的
+   `sudo rc-update add port-forwardd default`）。
+4. 排障使用 `sudo port-forward doctor`（机器可读输出：`--json`）；运行状态使用
+   `sudo port-forward status --json`，日志使用 `sudo port-forward logs`。
+
+升级时可固定版本并保留配置：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash -s -- upgrade --version 0.0.3
+```
+
+回滚也是以目标 Release 版本运行同一条命令；安装器保存此前安装文件的备份，且不改动
+`config.toml`。卸载默认同样保留配置和安装备份：
+
+```bash
+sudo bash install.sh uninstall --yes
+```
+
+只有明确传入 `--purge-config` 才会删除 `/etc/port-forward/config.toml`：
+
+```bash
+sudo bash install.sh uninstall --yes --purge-config
+```
+
 `port-forwardd` 是一个仅面向 Linux 的 root 常驻服务，用原生
 `nftables` 管理端口转发。它将配置文件完整校验、目标 DNS 解析、nft 批处理
 预检和原子提交放在一次重载中；`port-forward` 是通过 Unix socket 请求状态或
@@ -37,7 +77,7 @@ journald / syslog <────────────────── daemon
 
 ## nftables 兼容性、升级与回滚
 
-v0.0.2 不再使用 `destroy table`。每次重载会先通过 `nft -j list tables` 查询
+v0.0.3 不再使用 `destroy table`。每次重载会先通过 `nft -j list tables` 查询
 `port_forward_v4` 与 `port_forward_v6` 是否存在：首次启动只创建 table；已有自有
 table 的重载才在同一个 batch 内先执行相应的 `delete table`、再重建。随后仍严格
 按 `nft -c -f -` 预检成功、再单次 `nft -f -` 原子提交的顺序执行。因此预检失败
@@ -49,7 +89,7 @@ nftables 1.0.6、1.0.9、1.1.3（分别对应 Debian 12、Ubuntu 24.04、Debian 
 最低可用承诺。规则使用稳定的 `table ip`/`table ip6`、NAT/filter base chain 和数值
 priority：prerouting `-100`、forward `0`、postrouting `100`，不依赖命名 priority。
 
-v0.0.2 消除了旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
+v0.0.3 保留了 v0.0.2 消除旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
 组合；这不等于项目已验证某个更低的内核下限。内核的 nf_tables/NAT 功能、发行版
 backport 和本机防火墙策略仍会影响可用性，目前没有经过验证的精确最低内核版本。
 部署前请在目标内核上运行下文的 namespace 集成测试或等价的 `nft -c` 验证。
@@ -58,7 +98,7 @@ backport 和本机防火墙策略仍会影响可用性，目前没有经过验�
 会识别并原子替换同名自有 table，不接触外部规则。回滚前应保存配置和
 `nft list table ip port_forward_v4` / `nft list table ip6 port_forward_v6` 输出。若回滚
 到 v0.0.1，目标环境仍必须满足其 `destroy table` 前提；在不支持该命令的旧环境中应
-保留 v0.0.2，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
+保留 v0.0.3，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
 
 ## 配置模型
 
@@ -115,7 +155,8 @@ cargo build --release --bins
 sudo install -Dm0755 target/release/port-forwardd /usr/local/sbin/port-forwardd
 sudo install -Dm0755 target/release/port-forward /usr/local/bin/port-forward
 sudo install -d -m0700 /etc/port-forward /var/lib/port-forward
-sudo install -m0600 examples/config.toml /etc/port-forward/config.toml
+sudo install -m0600 examples/config.toml /etc/port-forward/config.toml.example
+sudo /usr/local/bin/port-forward init
 sudoedit /etc/port-forward/config.toml
 sudo /usr/local/bin/port-forward validate --config /etc/port-forward/config.toml
 ```
@@ -141,8 +182,9 @@ daemon 不可用时，`status` 会尝试读取 state 文件；其中已逾期的
 ```bash
 sudo install -Dm0644 systemd/port-forwardd.service /etc/systemd/system/port-forwardd.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now port-forwardd
-sudo systemctl status port-forwardd
+sudo systemctl enable port-forwardd
+sudo /usr/local/bin/port-forward start
+sudo systemctl status port-forwardd --no-pager
 ```
 
 unit 直接启动 daemon；daemon 自身在每次启动时会进行完整 reload，没有额外的
@@ -153,7 +195,7 @@ unit 直接启动 daemon；daemon 自身在每次启动时会进行完整 reload
 ```bash
 sudo install -Dm0755 openrc/port-forwardd /etc/init.d/port-forwardd
 sudo rc-update add port-forwardd default
-sudo rc-service port-forwardd start
+sudo /usr/local/bin/port-forward start
 ```
 
 OpenRC 脚本使用 `supervise-daemon` respawn daemon；仍由 daemon 自身在启动时
