@@ -217,7 +217,7 @@ grep -Fq 'dnat to [fd00:200::53]:443' <<<"$ipv6_rules" || fail 'IPv6 remote DNAT
 # detected existing owned tables and placed `delete table` before recreating
 # them in the same nft transaction.
 sed -i 's/ports = \[10443\]/ports = [11443]/g' "$config"
-"$cli" apply --socket "$socket" || fail 'valid reload unexpectedly failed'
+"$cli" apply --config "$config" --socket "$socket" || fail 'valid reload unexpectedly failed'
 reloaded_v4=$(nft list table ip port_forward_v4) || fail 'IPv4 table disappeared after reload'
 reloaded_v6=$(nft list table ip6 port_forward_v6) || fail 'IPv6 table disappeared after reload'
 grep -Fq 'tcp dport 11443' <<<"$reloaded_v4" || fail 'IPv4 table did not contain reloaded rules'
@@ -231,7 +231,7 @@ fi
 # nft commands to the real binary.
 nft list table ip port_forward_v4 >"$work_dir/old-v4.nft" || fail 'IPv4 daemon table was not installed'
 touch "$nft_precheck_failure_marker"
-if "$cli" apply --socket "$socket"; then
+if "$cli" apply --config "$config" --socket "$socket"; then
     fail 'nft-preflight-failing reload unexpectedly succeeded'
 fi
 rm -f -- "$nft_precheck_failure_marker"

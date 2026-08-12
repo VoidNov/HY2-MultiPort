@@ -225,7 +225,7 @@ impl Config {
         let profiles = self.validate()?;
         if profiles.is_empty() {
             return Err(ConfigError::Semantic(
-                "profiles must contain at least one complete forwarding profile; run port-forward init"
+                "profiles must contain at least one complete forwarding profile; run port-forward configure"
                     .to_owned(),
             ));
         }
@@ -311,6 +311,12 @@ impl Profile {
                 if host.trim().is_empty() {
                     return Err(ConfigError::Semantic(format!(
                         "profile {:?} remote host may not be empty",
+                        self.name
+                    )));
+                }
+                if host.eq_ignore_ascii_case("localhost") {
+                    return Err(ConfigError::Semantic(format!(
+                        "profile {:?} remote target localhost is loopback; choose the local-service target type instead",
                         self.name
                     )));
                 }

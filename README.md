@@ -4,24 +4,21 @@
 curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash
 ```
 
-当前默认安装版本是 **0.0.4**。这条命令只下载 GitHub Release 中与本机架构匹配的
+当前默认安装版本是 **0.0.5**。这条命令只下载 GitHub Release 中与本机架构匹配的
 版本化资产，并在安装前验证 `SHA256SUMS`；它不会下载或执行 main 分支的二进制。
 
-## 中文 5 分钟路径（0.0.4）
+## 中文 5 分钟路径（0.0.5）
 
 1. 在 Linux root 主机执行上面的安装命令。安装器会保留已有
    `/etc/port-forward/config.toml`；首次安装只保存文档示例，不会复制它、不启动服务，
    并显示醒目的 5 分钟向导。交互式终端可选择立即进入向导；`curl | sudo bash` 等
    非交互管道绝不等待输入。
-2. 运行 `sudo port-forward init`。向导列出 `ip -brief address` 的本机 IPv4/IPv6
-   地址，要求选择监听地址、协议、端口、目标类型（`redirect` / `remote` /
-   `loopback-dnat`）、目标与来源 CIDR，并生成最小可编辑配置。`init` 从不覆盖已有
-   配置，也不会复制 192.0.2/198.51.100/203.0.113/2001:db8 文档地址。
-   无终端时使用 `sudo port-forward init --non-interactive`（或 `--template`）只会生成
-   明确带 `TODO`、刻意不能启动的配置。
-3. 复查与编辑：`sudoedit /etc/port-forward/config.toml`；依次运行
-   `sudo port-forward validate`、`sudo port-forward doctor`，修复全部 `ERROR` 后再执行
-   `sudo port-forward start`。需要开机启动时，再执行 `sudo systemctl enable port-forwardd`
+2. 首次使用运行 `sudo port-forward configure`。向导使用目标主机实际探测的地址，
+   用业务语言询问协议、端口、目标服务和来源范围；本机 `127.0.0.1:443` 是正式支持的
+   本机服务场景。高级用户也可使用 `sudo port-forward add` 增量添加规则。
+3. 查看或删除规则：`sudo port-forward list`、`sudo port-forward remove NAME`。
+4. 复查并启动：`sudo port-forward validate && sudo port-forward doctor && sudo port-forward start`。
+   需要开机启动时，再执行 `sudo systemctl enable port-forwardd`
    （或 OpenRC 的 `sudo rc-update add port-forwardd default`）。
 4. `start` / `restart` 只有在 10 秒内同时确认 daemon 为 active 且
    `/run/port-forwardd.sock` 可用时才会报告成功。失败会直接显示 systemd 状态与最近
@@ -31,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.
 升级时可固定版本并保留配置：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash -s -- upgrade --version 0.0.4
+curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash -s -- upgrade --version 0.0.5
 ```
 
 回滚也是以目标 Release 版本运行同一条命令；安装器保存此前安装文件的备份，且不改动
@@ -57,9 +54,10 @@ sudo bash install.sh uninstall --yes --purge-config
 `postrouting` hook 时，daemon 会拒绝应用，而不会猜测规则优先级。
 
 `doctor` 会只读列出本机地址、文档保留地址错误、依赖、控制 socket 和外部 hook。
-若已运行 NetBird，常见结果是看到 `ip` / `ip6` 的 filter、mangle、nat 或 netbird
-base chain；这不是安装器可自动修复的情况。请先确认 hook priority、包流和安全边界，
-再手动编辑配置开启下列开关；程序不会自动改为 `true`，也永不修改外部 nft table/chain。
+如果目标主机已有其他软件或人工配置创建的 nftables base chain，doctor 会列出冲突的
+family/table/hook；这不是安装器可以安全猜测或自动修复的情况。请先确认 hook priority、
+包流和安全边界，再手动编辑配置开启下列开关；程序不会自动改为 `true`，也永不修改外部
+nft table/chain。
 
 如果运维人员已经确认规则优先级和数据流安全，可以在配置顶层显式开启：
 
@@ -89,7 +87,7 @@ journald / syslog <────────────────── daemon
 
 ## nftables 兼容性、升级与回滚
 
-v0.0.4 保留不使用 `destroy table` 的兼容策略。每次重载会先通过 `nft -j list tables` 查询
+v0.0.5 保留不使用 `destroy table` 的兼容策略。每次重载会先通过 `nft -j list tables` 查询
 `port_forward_v4` 与 `port_forward_v6` 是否存在：首次启动只创建 table；已有自有
 table 的重载才在同一个 batch 内先执行相应的 `delete table`、再重建。随后仍严格
 按 `nft -c -f -` 预检成功、再单次 `nft -f -` 原子提交的顺序执行。因此预检失败
@@ -101,7 +99,7 @@ nftables 1.0.6、1.0.9、1.1.3（分别对应 Debian 12、Ubuntu 24.04、Debian 
 最低可用承诺。规则使用稳定的 `table ip`/`table ip6`、NAT/filter base chain 和数值
 priority：prerouting `-100`、forward `0`、postrouting `100`，不依赖命名 priority。
 
-v0.0.4 保留了 v0.0.2 消除旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
+v0.0.5 保留了 v0.0.2 消除旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
 组合；这不等于项目已验证某个更低的内核下限。内核的 nf_tables/NAT 功能、发行版
 backport 和本机防火墙策略仍会影响可用性，目前没有经过验证的精确最低内核版本。
 部署前请在目标内核上运行下文的 namespace 集成测试或等价的 `nft -c` 验证。
@@ -110,7 +108,7 @@ backport 和本机防火墙策略仍会影响可用性，目前没有经过验�
 会识别并原子替换同名自有 table，不接触外部规则。回滚前应保存配置和
 `nft list table ip port_forward_v4` / `nft list table ip6 port_forward_v6` 输出。若回滚
 到 v0.0.1，目标环境仍必须满足其 `destroy table` 前提；在不支持该命令的旧环境中应
-保留 v0.0.4，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
+保留 v0.0.5，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
 
 ## 配置模型
 

@@ -135,7 +135,7 @@ nftables 1.0.7 / Linux kernel 6.3 前提传递给部署者。项目仍未验证 
 
 重载、目标切换和删除只停止新连接；既有 conntrack 连接自然结束，不主动清空 conntrack。
 
-daemon 必须在应用前检测外部 nftables base chain/hook 冲突。无法确认与 firewalld、UFW、Docker、Kubernetes 或人工规则共存安全时，拒绝应用并报告冲突，而不是猜测优先级。
+daemon 必须在应用前检测外部 nftables base chain/hook 冲突。无法确认与其他规则管理器或人工配置共存安全时，拒绝应用并报告冲突，而不是猜测优先级。
 
 ### 升级与回滚
 
