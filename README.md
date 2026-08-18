@@ -4,10 +4,10 @@
 curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash
 ```
 
-当前默认安装版本是 **0.0.6**。这条命令只下载 GitHub Release 中与本机架构匹配的
+当前默认安装版本是 **0.0.7**。这条命令只下载 GitHub Release 中与本机架构匹配的
 版本化资产，并在安装前验证 `SHA256SUMS`；它不会下载或执行 main 分支的二进制。
 
-## 中文 5 分钟路径（0.0.6）
+## 中文 5 分钟路径（0.0.7）
 
 1. 在 Linux root 主机执行上面的安装命令。安装器会保留已有
    `/etc/port-forward/config.toml`；首次安装只保存文档示例，不会复制它、不启动服务，
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.
 升级时可固定版本并保留配置：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash -s -- upgrade --version 0.0.6
+curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash -s -- upgrade --version 0.0.7
 ```
 
 回滚也是以目标 Release 版本运行同一条命令；安装器保存此前安装文件的备份，且不改动
@@ -87,7 +87,7 @@ journald / syslog <────────────────── daemon
 
 ## nftables 兼容性、升级与回滚
 
-v0.0.6 保留不使用 `destroy table` 的兼容策略。每次重载会先通过 `nft -j list tables` 查询
+v0.0.7 保留不使用 `destroy table` 的兼容策略。每次重载会先通过 `nft -j list tables` 查询
 `port_forward_v4` 与 `port_forward_v6` 是否存在：首次启动只创建 table；已有自有
 table 的重载才在同一个 batch 内先执行相应的 `delete table`、再重建。随后仍严格
 按 `nft -c -f -` 预检成功、再单次 `nft -f -` 原子提交的顺序执行。因此预检失败
@@ -99,7 +99,7 @@ nftables 1.0.6、1.0.9、1.1.3（分别对应 Debian 12、Ubuntu 24.04、Debian 
 最低可用承诺。规则使用稳定的 `table ip`/`table ip6`、NAT/filter base chain 和数值
 priority：prerouting `-100`、forward `0`、postrouting `100`，不依赖命名 priority。
 
-v0.0.6 保留了 v0.0.2 消除旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
+v0.0.7 保留了 v0.0.2 消除旧版 `destroy table` 所要求的 nftables 1.0.7 与 Linux kernel 6.3
 组合；这不等于项目已验证某个更低的内核下限。内核的 nf_tables/NAT 功能、发行版
 backport 和本机防火墙策略仍会影响可用性，目前没有经过验证的精确最低内核版本。
 部署前请在目标内核上运行下文的 namespace 集成测试或等价的 `nft -c` 验证。
@@ -108,7 +108,7 @@ backport 和本机防火墙策略仍会影响可用性，目前没有经过验�
 会识别并原子替换同名自有 table，不接触外部规则。回滚前应保存配置和
 `nft list table ip port_forward_v4` / `nft list table ip6 port_forward_v6` 输出。若回滚
 到 v0.0.1，目标环境仍必须满足其 `destroy table` 前提；在不支持该命令的旧环境中应
-保留 v0.0.6，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
+保留 v0.0.7，或手工验证并恢复所需的 nft 规则，而不要把旧二进制当作兼容回滚路径。
 
 ## 配置模型
 

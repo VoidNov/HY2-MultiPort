@@ -179,13 +179,10 @@ fn render_table(batch: &mut String, family: AddressFamily, profiles: &[(u32, &Re
                     ..
                 }
             ) {
-                for protocol in &profile.validated.profile.protocols {
-                    let _ = writeln!(
-                        batch,
-                        "    ct mark {mark} {protocol} masquerade comment \"hy2-multiport masquerade\"",
-                        protocol = protocol.nft_name()
-                    );
-                }
+                let _ = writeln!(
+                    batch,
+                    "    ct mark {mark} masquerade comment \"hy2-multiport masquerade\""
+                );
             }
         }
         batch.push_str("  }\n");
@@ -643,8 +640,61 @@ source_mode = "masquerade"
         let rules = generate_batch(&[profile], ManagedTablePresence::default());
         assert!(rules.contains("ip daddr 192.0.2.10 ip saddr { 192.0.2.0/24, 198.51.100.0/24 } tcp dport { 2053, 3053 } ct mark set 1 dnat to 10.0.0.53:53"));
         assert!(rules.contains("ct mark 1 ip daddr 10.0.0.53 tcp dport 53 ct state new accept"));
-        assert!(rules.contains("ct mark 1 tcp masquerade"));
-        assert!(rules.contains("ct mark 1 udp masquerade"));
+        assert!(rules.contains("ct mark 1 masquerade comment \"hy2-multiport masquerade\""));
+        assert!(!rules.contains("ct mark 1 tcp masquerade"));
+        assert!(!rules.contains("ct mark 1 udp masquerade"));
+    }
+
+    #[test]
+    fn preserve_mode_has_no_snat_or_masquerade() {
+        let profile = profile(
+            r#"
+schema_version = 1
+[[profiles]]
+name = "preserve"
+family = "ipv4"
+listen_address = "192.0.2.10"
+protocols = ["tcp"]
+[profiles.listen_ports]
+ports = [8443]
+[profiles.target]
+kind = "remote"
+host = "origin.test"
+port = 34823
+source_mode = "preserve"
+"#,
+            Some("198.18.0.7"),
+        );
+        let rules = generate_batch(&[profile], ManagedTablePresence::default());
+        assert!(!rules.contains("postrouting"));
+        assert!(!rules.contains("masquerade"));
+        assert!(!rules.contains("snat"));
+    }
+
+    #[test]
+    fn masquerade_mode_uses_valid_marked_masquerade_rule() {
+        let profile = profile(
+            r#"
+schema_version = 1
+[[profiles]]
+name = "masquerade"
+family = "ipv4"
+listen_address = "192.0.2.10"
+protocols = ["tcp", "udp"]
+[profiles.listen_ports]
+ports = [8443]
+[profiles.target]
+kind = "remote"
+host = "origin.test"
+port = 34823
+source_mode = "masquerade"
+"#,
+            Some("198.18.0.7"),
+        );
+        let rules = generate_batch(&[profile], ManagedTablePresence::default());
+        assert!(rules.contains("ct mark 1 masquerade comment"));
+        assert!(!rules.contains("ct mark 1 tcp masquerade"));
+        assert!(!rules.contains("ct mark 1 udp masquerade"));
     }
 
     #[test]

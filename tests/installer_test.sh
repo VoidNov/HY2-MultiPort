@@ -54,7 +54,7 @@ run_stdin_installer() {
 }
 
 make_release_fixture() {
-    local version=0.0.6 target=x86_64-unknown-linux-gnu
+    local version=0.0.7 target=x86_64-unknown-linux-gnu
     local package="port-forward-${version}-${target}"
     local stage="$fixture_root/stage/$package"
     local release="$fixture_root/releases/v${version}"
@@ -87,15 +87,15 @@ fi
 assert_contains '版本格式无效' "$invalid_output"
 
 invalid_option_output="$fixture_root/invalid-option.out"
-if run_installer "$invalid_option_output" status --version 0.0.6; then
+if run_installer "$invalid_option_output" status --version 0.0.7; then
     fail 'status with install option unexpectedly succeeded'
 fi
 assert_contains '不支持指定的安装选项' "$invalid_option_output"
 
 make_release_fixture
 dry_run_output="$fixture_root/dry-run.out"
-run_installer "$dry_run_output" --dry-run --version v0.0.6 --base-url "file://$fixture_root/releases"
-assert_contains '版本 v0.0.6' "$dry_run_output"
+run_installer "$dry_run_output" --dry-run --version v0.0.7 --base-url "file://$fixture_root/releases"
+assert_contains '版本 v0.0.7' "$dry_run_output"
 assert_contains 'dry-run 校验成功' "$dry_run_output"
 assert_not_exists "$fixture_root/bin/port-forward"
 assert_not_exists "$fixture_root/etc/port-forward/config.toml"
@@ -104,14 +104,14 @@ config_dir="$fixture_root/etc/port-forward"
 mkdir -p "$config_dir"
 printf 'operator-owned configuration\n' >"$config_dir/config.toml"
 install_output="$fixture_root/install.out"
-run_installer "$install_output" --version 0.0.6 --base-url "file://$fixture_root/releases"
+run_installer "$install_output" --version 0.0.7 --base-url "file://$fixture_root/releases"
 [[ $(<"$config_dir/config.toml") == 'operator-owned configuration' ]] \
     || fail 'installer overwrote existing configuration'
 assert_contains '已保护现有配置' "$install_output"
 
 fresh_output="$fixture_root/fresh.out"
 rm -f -- "$config_dir/config.toml"
-run_stdin_installer "$fresh_output" --version 0.0.6 --base-url "file://$fixture_root/releases"
+run_stdin_installer "$fresh_output" --version 0.0.7 --base-url "file://$fixture_root/releases"
 assert_contains '首次使用：5 分钟配置向导' "$fresh_output"
 assert_contains 'sudo ' "$fresh_output"
 assert_contains 'port-forward configure' "$fresh_output"

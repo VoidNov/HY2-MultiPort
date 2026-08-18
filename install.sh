@@ -5,7 +5,7 @@
 set -euo pipefail
 
 readonly PROGRAM_NAME='HY2-MultiPort installer'
-readonly DEFAULT_VERSION='0.0.6'
+readonly DEFAULT_VERSION='0.0.7'
 readonly DEFAULT_BASE_URL='https://github.com/VoidNov/HY2-MultiPort/releases/download'
 
 # The environment overrides are primarily useful for package builders and the
@@ -49,7 +49,7 @@ usage() {
 中的版本化压缩包和 SHA256SUMS，绝不下载 main 分支二进制。
 
 选项：
-  --version VERSION  固定版本，例如 0.0.6 或 v0.0.6（默认 0.0.6）
+  --version VERSION  固定版本，例如 0.0.7 或 v0.0.7（默认 0.0.7）
   --base-url URL     Release 下载根目录（默认 GitHub releases/download）
   --dry-run          下载、校验和解包检查，但不修改文件、服务或 nftables
   --yes              跳过 uninstall 的交互确认
@@ -60,7 +60,7 @@ usage() {
 
 示例：
   curl -fsSL https://raw.githubusercontent.com/VoidNov/HY2-MultiPort/main/install.sh | sudo bash
-  sudo bash install.sh --version v0.0.6
+  sudo bash install.sh --version v0.0.7
   sudo bash install.sh status
   sudo bash install.sh uninstall --yes
 USAGE
@@ -265,7 +265,7 @@ install_or_upgrade() {
         die '--enable/--start 需要 systemd 或 OpenRC；当前系统不支持服务管理。二进制尚未写入。'
     fi
     target=$(detect_target)
-    version=$(normalize_version "$requested_version") || die "版本格式无效：$requested_version（应为 0.0.6 或 v0.0.6）"
+    version=$(normalize_version "$requested_version") || die "版本格式无效：$requested_version（应为 0.0.7 或 v0.0.7）"
     tag="v$version"
     asset="port-forward-${version}-${target}.tar.gz"
     package="port-forward-${version}-${target}"

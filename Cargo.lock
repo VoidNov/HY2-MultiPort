@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "hy2-multiport"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "clap",
